@@ -1,5 +1,6 @@
 import re
 import os
+import json
 import argparse
 from bs4 import BeautifulSoup, NavigableString, CData
 
@@ -14,7 +15,6 @@ def process_node(node):
         # For CDATA sections (like in code blocks), we don't want to escape them.
         # For regular strings, we can do some minor cleaning.
         if isinstance(node, CData):
-            print("CDATA Node:", node)
             return node
         text = str(node)
         # Confluence often adds non-breaking spaces; replace them.
@@ -26,12 +26,10 @@ def process_node(node):
     # If it's a tag, look up its mapping.
     if node.name in TAG_MAPPINGS:
         # Pass the node and the processor to the mapping function.
-        print("Mapped Node:", node)
         return TAG_MAPPINGS[node.name](node, process_node)
 
     # If no mapping exists for the tag, just process its children.
     # This effectively ignores tags like <span> or <div> while keeping their content.
-    print("Unknown Node:", node.name)
     return "".join(process_node(child) for child in node.children)
 
 
@@ -107,32 +105,57 @@ def handle_info_note_macro(node, processor):
     """
     Handles Confluence 'info' and 'note' macros.
     Formats them as a Slack blockquote with a bolded title.
+    It "breaks out" of the blockquote for nested code blocks, as Slack does not support them.
     """
     title_node = node.find("ac:parameter", {"ac:name": "title"})
     title = title_node.get_text(strip=True) if title_node else ""
 
     body_node = node.find("ac:rich-text-body")
-    body_content = ""
-    if body_node:
-        # We need to process the children of the body node
-        body_content = handle_children(body_node, processor).strip()
 
-    # Format as a Slack blockquote
-    # Note: Slack's blockquote (`>`) applies to the whole block.
-    # We create the title and then indent the body content.
-    formatted_str = ""
+    output_parts = []
+
+    # Start building the initial blockquote content (title and text)
+    blockquote_text_parts = []
     if title:
-        formatted_str += f"> *{title}*\n"
+        blockquote_text_parts.append(f"*{title}*")
 
-    # Add each line of the body content with the blockquote prefix.
-    # This ensures multi-paragraph content inside the macro is quoted correctly.
-    if body_content:
-        indented_body = "\n".join(
-            [f"> {line}" for line in body_content.strip().split("\n")]
+    if not body_node:
+        if blockquote_text_parts:
+            return "> " + "".join(blockquote_text_parts) + "\n\n"
+        return ""
+
+    # Iterate through child elements to separate blockquote content from code blocks
+    for child in body_node.children:
+        is_code_macro = (
+            hasattr(child, "name")
+            and child.name == "ac:structured-macro"
+            and child.get("ac:name") == "code"
         )
-        formatted_str += indented_body
 
-    return formatted_str + "\n\n"
+        if is_code_macro:
+            # 1. Finalize and append any pending blockquote text
+            if blockquote_text_parts:
+                full_text = "\n".join(blockquote_text_parts).strip()
+                output_parts.append("> " + full_text.replace("\n", "\n> "))
+                blockquote_text_parts = []  # Reset
+
+            # 2. Process and append the code block without a blockquote
+            code_markdown = processor(child).strip()
+            if code_markdown:
+                output_parts.append(code_markdown)
+        else:
+            # It's not a code macro, so add its processed content for later blockquoting
+            child_markdown = processor(child).strip()
+            if child_markdown:
+                blockquote_text_parts.append(child_markdown)
+
+    # After the loop, append any remaining blockquote text
+    if blockquote_text_parts:
+        full_text = "\n".join(blockquote_text_parts).strip()
+        output_parts.append("> " + full_text.replace("\n", "\n> "))
+
+    # Join all the parts (blockquotes, code blocks) with proper spacing
+    return "\n\n".join(part for part in output_parts if part) + "\n\n"
 
 
 def handle_code_macro(node, processor):
@@ -175,9 +198,9 @@ TAG_MAPPINGS = {
     "h1": handle_h(1),
     "h2": handle_h(2),
     "h3": handle_h(3),
-    "h4": handle_h(4),
-    "h5": handle_h(5),
-    "h6": handle_h(6),
+    "h4": handle_h(3),  # Mapped to ### for Slack Canvas compatibility
+    "h5": handle_h(3),  # Mapped to ### for Slack Canvas compatibility
+    "h6": handle_h(3),  # Mapped to ### for Slack Canvas compatibility
     "li": handle_li,
     "ul": handle_children,  # ul/ol tags don't get special chars, the li does
     "ol": handle_children,
@@ -212,11 +235,10 @@ def convert_confluence_html_to_markdown(html_content):
         str: The converted Markdown string.
     """
     # Use the 'lxml' parser for flexibility with HTML fragments.
-    # The 'xml' parser is too strict and fails on this input.
     soup = BeautifulSoup(html_content, "lxml")
 
     # Process the entire body of the parsed document
-    markdown_output = process_node(soup)
+    markdown_output = process_node(soup.body or soup)
 
     # Final cleanup: Ensure there aren't more than two consecutive newlines
     markdown_output = re.sub(r"\n{3,}", "\n\n", markdown_output)
@@ -236,10 +258,16 @@ def main():
     """
     # --- Setup Argument Parser ---
     parser = argparse.ArgumentParser(
-        description="Converts a Confluence HTML export file (.txt or .html) to Slack-compatible Markdown."
+        description="Converts a Confluence HTML export to Slack-compatible Markdown and a JSON API payload."
     )
     parser.add_argument(
         "input_file", help="Path to the input file containing the Confluence HTML."
+    )
+    parser.add_argument(
+        "-c",
+        "--channel-id",
+        required=True,
+        help="The Slack channel ID where the canvas will be created (e.g., C07317JTXCP).",
     )
     args = parser.parse_args()
 
@@ -249,7 +277,7 @@ def main():
             html_content = f.read()
     except FileNotFoundError:
         print(f"Error: Input file not found at '{args.input_file}'")
-        return  # Exit the function
+        return
     except Exception as e:
         print(f"Error reading file: {e}")
         return
@@ -258,22 +286,37 @@ def main():
     print(f"Converting '{args.input_file}'...")
     markdown_result = convert_confluence_html_to_markdown(html_content)
 
-    # --- Write to Output File ---
+    # --- Create Output Directory and Filenames ---
     output_dir = "output"
     os.makedirs(output_dir, exist_ok=True)
 
     base_filename = os.path.basename(args.input_file)
     filename_without_ext = os.path.splitext(base_filename)[0]
-    output_filename = f"{filename_without_ext}.md"
-    output_path = os.path.join(output_dir, output_filename)
+
+    md_output_path = os.path.join(output_dir, f"{filename_without_ext}.md")
+    json_output_path = os.path.join(output_dir, f"{filename_without_ext}_payload.json")
+
+    # --- Write the Markdown File ---
+    try:
+        with open(md_output_path, "w", encoding="utf-8") as f:
+            f.write(markdown_result)
+        print(f"✔️ Markdown file saved to: '{md_output_path}'")
+    except Exception as e:
+        print(f"❌ Error writing Markdown file: {e}")
+        return
+
+    # --- Build and Write the JSON Payload File ---
+    payload = {
+        "channel_id": args.channel_id,
+        "document_content": {"type": "markdown", "markdown": markdown_result},
+    }
 
     try:
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(markdown_result)
-        print(f"Successfully converted.")
-        print(f"Markdown output saved to: '{output_path}'")
+        with open(json_output_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+        print(f"✔️ Slack API JSON payload saved to: '{json_output_path}'")
     except Exception as e:
-        print(f"Error writing to output file: {e}")
+        print(f"❌ Error writing JSON payload file: {e}")
 
 
 if __name__ == "__main__":
