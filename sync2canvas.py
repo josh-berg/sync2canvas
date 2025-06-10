@@ -139,7 +139,6 @@ def upload_to_slack(file_path):
         )
         upload_url = uploadUrlResponse["upload_url"]
         file_id = uploadUrlResponse["file_id"]
-        print(f"UploadUrl: {upload_url}, File ID: {file_id}")
         with open(file_path, "rb") as f:
             files = {"file": (os.path.basename(file_path), f)}
             response = requests.post(upload_url, files=files)
@@ -148,8 +147,7 @@ def upload_to_slack(file_path):
                 complete_response = client.files_completeUploadExternal(
                     files=[{"id": file_id, "title": os.path.basename(file_path)}]
                 )
-                print(f"✔️ File completed upload: {complete_response}")
-                return complete_response["url_private"]
+                return complete_response["files"][0]["permalink"]
             else:
                 print(f"❌ Slack upload failed: {response.status_code} {response.text}")
                 return None
@@ -173,8 +171,10 @@ def process_node(node):
         text = str(node).replace("\xa0", " ")
         return re.sub(r"\s+", " ", text)
     if node.name in TAG_MAPPINGS:
-        return TAG_MAPPINGS[node.name](node, process_node)
-    return "".join(process_node(child) for child in node.children)
+        result = TAG_MAPPINGS[node.name](node, process_node)
+        return result
+    result = "".join(process_node(child) for child in node.children)
+    return result
 
 
 def handle_children(node, processor):
@@ -182,9 +182,16 @@ def handle_children(node, processor):
 
 
 def handle_p(node, processor):
-    content = handle_children(node, processor).strip()
-    if not content or (node.find("br") and len(node.get_text(strip=True)) == 0):
+    content = handle_children(node, processor)
+    # Only treat as empty if content is truly empty (not just whitespace or block-level content)
+    has_block = any(
+        child.name in ("ac:structured-macro", "ac:image")
+        for child in node.descendants
+        if hasattr(child, "name")
+    )
+    if not content.strip() and not has_block:
         return ""
+    # Remove the 'br' check: always output if there is block-level content
     return content + "\n\n"
 
 
@@ -248,49 +255,21 @@ def handle_confluence_macro(node, processor):
 
 
 def handle_info_note_macro(node, processor):
-    """Handles 'info'/'note' macros, using blockquote formatting and ensuring only a single blank line between paragraphs in output."""
+    """Handles 'info'/'note' macros, wrapping content in callout markers and using standard parsing for inner content."""
     title_node = node.find("ac:parameter", {"ac:name": "title"})
     title = title_node.get_text(strip=True) if title_node else ""
     body_node = node.find("ac:rich-text-body")
 
-    output_parts = []
-    blockquote_text_parts = [f"**{title}**"] if title else []
-
-    if not body_node:
-        if blockquote_text_parts:
-            return "> " + "\n> ".join(blockquote_text_parts) + "\n\n"
-        return ""
-
-    for child in body_node.children:
-        is_code_macro = (
-            hasattr(child, "name")
-            and child.name == "ac:structured-macro"
-            and child.get("ac:name") == "code"
-        )
-        if is_code_macro:
-            if blockquote_text_parts:
-                full_text = "\n".join(blockquote_text_parts).strip()
-                # Collapse multiple blank lines to one
-                full_text = re.sub(r"(\n\s*){2,}", "\n\n", full_text)
-                output_parts.append("> " + full_text.replace("\n", "\n> "))
-                blockquote_text_parts = []
-            code_markdown = processor(child)
-            if code_markdown:
-                output_parts.append(code_markdown)
-        else:
-            child_markdown = processor(child)
-            if child_markdown:
-                blockquote_text_parts.append(child_markdown)
-
-    if blockquote_text_parts:
-        full_text = "\n".join(blockquote_text_parts).strip()
-        full_text = re.sub(r"(\n\s*){2,}", "\n\n", full_text)
-        output_parts.append("> " + full_text.replace("\n", "\n> "))
-
-    # Join with a single blank line between sections, and collapse 3+ newlines to 2 in the whole block
-    return (
-        re.sub(r"(\n\s*){3,}", "\n\n", "\n\n".join(filter(None, output_parts))) + "\n\n"
-    )
+    output_parts = ["===========START CALLOUT=========="]
+    if title:
+        output_parts.append(f"**{title}**\n")
+    if body_node:
+        # Standard parsing for everything inside the macro
+        body_content = handle_children(body_node, processor).strip()
+        if body_content:
+            output_parts.append(body_content)
+    output_parts.append("===========END CALLOUT==========\n")
+    return "\n".join(output_parts) + "\n"
 
 
 def handle_code_macro(node, processor):
@@ -337,8 +316,6 @@ def handle_multimedia_macro(node, processor):
     multimedia_filename = attachment_node.get("ri:filename")
     if not multimedia_filename:
         return ""
-
-    print(f"Downloading attachment: {multimedia_filename}")
 
     file_path = download_attachment(PAGE_ID, multimedia_filename)
     slack_file_url = upload_to_slack(file_path=file_path)
