@@ -254,13 +254,19 @@ def handle_confluence_macro(node, processor):
     return handle_children(node, processor)
 
 
+callout_counter = 0
+
+
 def handle_info_note_macro(node, processor):
-    """Handles 'info'/'note' macros, wrapping content in callout markers and using standard parsing for inner content."""
+    """Handles 'info'/'note' macros, wrapping content in callout markers and using standard parsing for inner content. Adds an index to each callout."""
+    global callout_counter
+    callout_counter += 1
+    idx = callout_counter
     title_node = node.find("ac:parameter", {"ac:name": "title"})
     title = title_node.get_text(strip=True) if title_node else ""
     body_node = node.find("ac:rich-text-body")
 
-    output_parts = ["===========START CALLOUT=========="]
+    output_parts = [f"===========START CALLOUT {idx}=========="]
     if title:
         output_parts.append(f"**{title}**\n")
     if body_node:
@@ -268,8 +274,8 @@ def handle_info_note_macro(node, processor):
         body_content = handle_children(body_node, processor).strip()
         if body_content:
             output_parts.append(body_content)
-    output_parts.append("===========END CALLOUT==========\n")
-    return "\n".join(output_parts) + "\n"
+    output_parts.append(f"\n===========END CALLOUT {idx}==========\n")
+    return "\n" + "\n".join(output_parts) + "\n\n"
 
 
 def handle_code_macro(node, processor):
