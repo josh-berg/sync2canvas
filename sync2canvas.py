@@ -115,16 +115,35 @@ def handle_h(level):
 
 
 def handle_em(node, processor):
-    return f"_{handle_children(node, processor).strip()}_"
+    """Handles <em> and <i> tags, moving leading/trailing spaces outside the formatting."""
+    content = handle_children(node, processor)
+    leading_whitespace = content[: len(content) - len(content.lstrip())]
+    trailing_whitespace = content[len(content.rstrip()) :]
+    core_text = content.strip()
+    if not core_text:
+        return content  # Return original content if it's all whitespace
+    return f"{leading_whitespace}_{core_text}_{trailing_whitespace}"
 
 
 def handle_strong(node, processor):
-    return f"**{handle_children(node, processor).strip()}**"
+    """Handles <strong> and <b> tags, moving leading/trailing spaces outside the formatting."""
+    content = handle_children(node, processor)
+    leading_whitespace = content[: len(content) - len(content.lstrip())]
+    trailing_whitespace = content[len(content.rstrip()) :]
+    core_text = content.strip()
+    if not core_text:
+        return content  # Return original content if it's all whitespace
+    # Use single asterisks for Slack's bold format
+    return f"{leading_whitespace}*{core_text}*{trailing_whitespace}"
 
 
 def handle_a(node, processor):
+    """Handles <a> tags for Slack-style links."""
     text = handle_children(node, processor).strip()
     href = node.get("href", "")
+    # Handle Confluence relative links
+    if href.startswith("/"):
+        href = "https://sync.hudlnet.com" + href
     if not text:
         return href
     return f"[{text}]({href})" if href else text
@@ -146,17 +165,20 @@ def handle_confluence_macro(node, processor):
 
 
 def handle_info_note_macro(node, processor):
-    title = (
-        node.find("ac:parameter", {"ac:name": "title"}).get_text(strip=True)
-        if node.find("ac:parameter", {"ac:name": "title"})
-        else ""
-    )
+    """Handles 'info'/'note' macros, breaking out code blocks to avoid nesting errors."""
+    title_node = node.find("ac:parameter", {"ac:name": "title"})
+    title = title_node.get_text(strip=True) if title_node else ""
     body_node = node.find("ac:rich-text-body")
-    output_parts, blockquote_text_parts = [], [f"**{title}**\n"] if title else []
+
+    output_parts = []
+    # Use single asterisks for Slack bold
+    blockquote_text_parts = [f"*{title}*"] if title else []
+
     if not body_node:
-        return (
-            f'> {"".join(blockquote_text_parts)}\n\n' if blockquote_text_parts else ""
-        )
+        if blockquote_text_parts:
+            return "> " + "".join(blockquote_text_parts) + "\n\n"
+        return ""
+
     for child in body_node.children:
         is_code_macro = (
             hasattr(child, "name")
@@ -175,9 +197,11 @@ def handle_info_note_macro(node, processor):
             child_markdown = processor(child).strip()
             if child_markdown:
                 blockquote_text_parts.append(child_markdown)
+
     if blockquote_text_parts:
         full_text = "\n".join(blockquote_text_parts).strip()
         output_parts.append("> " + full_text.replace("\n", "\n> "))
+
     return "\n\n".join(filter(None, output_parts)) + "\n\n"
 
 
@@ -265,10 +289,11 @@ def main():
     # Perform the conversion
     print("Converting HTML to Markdown...")
     body_markdown = convert_confluence_html_to_markdown(html_content)
-
-    # Prepend metadata to the final markdown
-    final_markdown = f"_Original Author: {username}_\n\n# \n{body_markdown}"
     print("✔️ Conversion complete.")
+
+    # Create two versions of the markdown content
+    markdown_for_payload = f"_Original Author: {username}_\n\n{body_markdown}"
+    markdown_for_file = f"# {title}\n\n{markdown_for_payload}"
 
     # Create Output Directory and Filenames
     output_dir = "output"
@@ -278,16 +303,17 @@ def main():
     md_output_path = os.path.join(output_dir, f"{base_filename}.md")
     json_output_path = os.path.join(output_dir, f"{base_filename}_payload.json")
 
-    # Write the Markdown File
+    # Write the Markdown File (with the title)
     with open(md_output_path, "w", encoding="utf-8") as f:
-        f.write(final_markdown)
+        f.write(markdown_for_file)
     print(f"✔️ Markdown file saved to: '{md_output_path}'")
 
     # Build and Write the JSON Payload File
+    # The title is a top-level property, and the markdown does not contain the title.
     payload = {
-        "title": title,
         "channel_id": args.channel_id,
-        "document_content": {"type": "markdown", "markdown": final_markdown},
+        "title": title,
+        "document_content": {"type": "markdown", "markdown": markdown_for_payload},
     }
     with open(json_output_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
