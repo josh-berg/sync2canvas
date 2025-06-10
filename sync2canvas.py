@@ -3,6 +3,7 @@ import os
 import json
 import argparse
 import html
+from slack_sdk import WebClient
 
 try:
     import requests
@@ -76,6 +77,86 @@ def fetch_confluence_data(page_id, cookies):
     except requests.exceptions.RequestException as e:
         print(f"❌ A network error occurred: {e}")
         return None, None, None
+
+
+def download_attachment(page_id, filename):
+    """
+    Downloads an attachment from Confluence to a local folder.
+
+    Args:
+        page_id (str): The Confluence page ID.
+        filename (str): The attachment filename.
+        dest_folder (str): The destination folder (default: 'tmp').
+
+    Returns:
+        str: The local file path if successful, None otherwise.
+    """
+    url = f"https://sync.hudlnet.com/download/attachments/{page_id}/{filename}"
+    dest_folder = "tmp"
+    os.makedirs(dest_folder, exist_ok=True)
+    local_path = os.path.join(dest_folder, filename)
+
+    aws_cookie = os.getenv("AWSELB_COOKIE")
+    seraph_cookie = os.getenv("SERAPH_COOKIE")
+    if not all([aws_cookie, seraph_cookie]):
+        print("❌ Error: Missing required environment variables for download.")
+        return None
+
+    cookies = {
+        "AWSELBAuthSessionCookie-0": aws_cookie,
+        "seraph.confluence": seraph_cookie,
+    }
+
+    try:
+        response = requests.get(url, cookies=cookies, stream=True)
+        response.raise_for_status()
+        with open(local_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        print(f"✔️ Downloaded '{filename}' to '{local_path}'")
+        return local_path  # Always return the local file path on success
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Failed to download '{filename}': {e}")
+        return None
+
+
+def upload_to_slack(file_path):
+    """
+    Uploads a file to a Slack channel.
+
+    Args:
+        file_path (str): The path to the file to upload.
+        slack_bot_token (str): The Slack bot token for authentication.
+
+    Returns:
+        dict: The response from the Slack API.
+    """
+    client = WebClient(token=SLACK_BOT_TOKEN)
+    try:
+        uploadUrlResponse = client.files_getUploadURLExternal(
+            filename=os.path.basename(file_path), length=os.path.getsize(file_path)
+        )
+        upload_url = uploadUrlResponse["upload_url"]
+        file_id = uploadUrlResponse["file_id"]
+        print(f"UploadUrl: {upload_url}, File ID: {file_id}")
+        with open(file_path, "rb") as f:
+            files = {"file": (os.path.basename(file_path), f)}
+            response = requests.post(upload_url, files=files)
+            if response.status_code == 200:
+                print("✔️ File uploaded to Slack successfully.")
+                complete_response = client.files_completeUploadExternal(
+                    files=[{"id": file_id, "title": os.path.basename(file_path)}]
+                )
+                print(f"✔️ File completed upload: {complete_response}")
+                return complete_response["url_private"]
+            else:
+                print(f"❌ Slack upload failed: {response.status_code} {response.text}")
+                return None
+
+    except Exception as e:
+        print(f"❌ Failed to upload file to Slack: {e}")
+        return None
 
 
 # --- Conversion Logic ---
@@ -167,18 +248,17 @@ def handle_confluence_macro(node, processor):
 
 
 def handle_info_note_macro(node, processor):
-    """Handles 'info'/'note' macros, breaking out code blocks to avoid nesting errors."""
+    """Handles 'info'/'note' macros, using blockquote formatting and ensuring only a single blank line between paragraphs in output."""
     title_node = node.find("ac:parameter", {"ac:name": "title"})
     title = title_node.get_text(strip=True) if title_node else ""
     body_node = node.find("ac:rich-text-body")
 
     output_parts = []
-    # Use single asterisks for Slack bold
-    blockquote_text_parts = [f"**{title}**\n"] if title else []
+    blockquote_text_parts = [f"**{title}**"] if title else []
 
     if not body_node:
         if blockquote_text_parts:
-            return "> " + "".join(blockquote_text_parts) + "\n\n"
+            return "> " + "\n> ".join(blockquote_text_parts) + "\n\n"
         return ""
 
     for child in body_node.children:
@@ -188,25 +268,29 @@ def handle_info_note_macro(node, processor):
             and child.get("ac:name") == "code"
         )
         if is_code_macro:
-            # print(f"Found a 'code' macro, processing separately... {child}")
             if blockquote_text_parts:
-                print("Closing blockquote before code macro...")
                 full_text = "\n".join(blockquote_text_parts).strip()
+                # Collapse multiple blank lines to one
+                full_text = re.sub(r"(\n\s*){2,}", "\n\n", full_text)
                 output_parts.append("> " + full_text.replace("\n", "\n> "))
                 blockquote_text_parts = []
-            code_markdown = processor(child).strip()
+            code_markdown = processor(child)
             if code_markdown:
                 output_parts.append(code_markdown)
         else:
-            child_markdown = processor(child).strip()
+            child_markdown = processor(child)
             if child_markdown:
                 blockquote_text_parts.append(child_markdown)
 
     if blockquote_text_parts:
         full_text = "\n".join(blockquote_text_parts).strip()
+        full_text = re.sub(r"(\n\s*){2,}", "\n\n", full_text)
         output_parts.append("> " + full_text.replace("\n", "\n> "))
 
-    return "\n\n".join(filter(None, output_parts)) + "\n\n"
+    # Join with a single blank line between sections, and collapse 3+ newlines to 2 in the whole block
+    return (
+        re.sub(r"(\n\s*){3,}", "\n\n", "\n\n".join(filter(None, output_parts))) + "\n\n"
+    )
 
 
 def handle_code_macro(node, processor):
@@ -228,6 +312,40 @@ def handle_code_macro(node, processor):
     return f"```{lang}\n{code_content}\n```\n\n"
 
 
+def handle_image(node, processor):
+    """Handles Confluence image macros."""
+    attachment_node = node.find("ri:attachment")
+    if not attachment_node:
+        return ""
+
+    image_filename = attachment_node.get("ri:filename")
+    if not image_filename:
+        return ""
+
+    file_path = download_attachment(PAGE_ID, image_filename)
+    slack_file_url = upload_to_slack(file_path=file_path)
+
+    return f"![{image_filename}]({slack_file_url})\n\n"
+
+
+def handle_multimedia_macro(node, processor):
+    """Handles Confluence multimedia macros."""
+    attachment_node = node.find("ri:attachment")
+    if not attachment_node:
+        return ""
+
+    multimedia_filename = attachment_node.get("ri:filename")
+    if not multimedia_filename:
+        return ""
+
+    print(f"Downloading attachment: {multimedia_filename}")
+
+    file_path = download_attachment(PAGE_ID, multimedia_filename)
+    slack_file_url = upload_to_slack(file_path=file_path)
+
+    return f"![{multimedia_filename}]({slack_file_url})\n\n"
+
+
 # --- Mappings ---
 
 TAG_MAPPINGS = {
@@ -247,12 +365,14 @@ TAG_MAPPINGS = {
     "i": handle_em,
     "strong": handle_strong,
     "b": handle_strong,
+    "ac:image": handle_image,
     "ac:structured-macro": handle_confluence_macro,
 }
 CONFLUENCE_MACRO_MAPPINGS = {
     "info": handle_info_note_macro,
     "note": handle_info_note_macro,
     "code": handle_code_macro,
+    "multimedia": handle_multimedia_macro,
 }
 
 
@@ -302,8 +422,13 @@ def convert_confluence_html_to_markdown(html_content):
 
 # --- Main Execution ---
 
+# Global variable to hold the page ID
+PAGE_ID = None
+SLACK_BOT_TOKEN = None
+
 
 def main():
+    global PAGE_ID, SLACK_BOT_TOKEN
     parser = argparse.ArgumentParser(
         description="Fetches a Confluence page and converts it to Slack-compatible Markdown and a JSON API payload."
     )
@@ -313,7 +438,17 @@ def main():
     parser.add_argument(
         "-c", "--channel-id", required=True, help="The Slack channel ID for the canvas."
     )
+    parser.add_argument(
+        "-t",
+        "--slack-bot-token",
+        required=True,
+        help="The Slack bot token for authentication.",
+    )
     args = parser.parse_args()
+
+    # Save the page id and slack bot token globally
+    PAGE_ID = args.page_id
+    SLACK_BOT_TOKEN = args.slack_bot_token
 
     # Check for environment variables
     aws_cookie = os.getenv("AWSELB_COOKIE")
