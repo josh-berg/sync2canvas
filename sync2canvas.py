@@ -329,6 +329,21 @@ def handle_multimedia_macro(node, processor):
     return f"![{multimedia_filename}]({slack_file_url})\n\n"
 
 
+def handle_jira_macro(node, processor):
+    """Handles Confluence JIRA macros."""
+    jira_issue_key = None
+    for param in node.find_all("ac:parameter"):
+        if param.get("ac:name") == "key":
+            jira_issue_key = param.get_text(strip=True)
+            break
+    if not jira_issue_key:
+        return ""
+
+    # Format the JIRA issue link
+    jira_url = f"https://hudl-jira.atlassian.net/browse/{jira_issue_key}"
+    return f"[{jira_issue_key}]({jira_url})\n\n"
+
+
 # --- Mappings ---
 
 TAG_MAPPINGS = {
@@ -356,6 +371,7 @@ CONFLUENCE_MACRO_MAPPINGS = {
     "note": handle_info_note_macro,
     "code": handle_code_macro,
     "multimedia": handle_multimedia_macro,
+    "jira": handle_jira_macro,
 }
 
 
