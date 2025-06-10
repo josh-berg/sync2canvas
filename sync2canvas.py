@@ -119,7 +119,7 @@ def handle_em(node, processor):
 
 
 def handle_strong(node, processor):
-    return f"*{handle_children(node, processor).strip()}*"
+    return f"**{handle_children(node, processor).strip()}**"
 
 
 def handle_a(node, processor):
@@ -127,7 +127,7 @@ def handle_a(node, processor):
     href = node.get("href", "")
     if not text:
         return href
-    return f"<{href}|{text}>" if href else text
+    return f"[{text}]({href})" if href else text
 
 
 def handle_li(node, processor):
@@ -152,7 +152,7 @@ def handle_info_note_macro(node, processor):
         else ""
     )
     body_node = node.find("ac:rich-text-body")
-    output_parts, blockquote_text_parts = [], [f"*{title}*"] if title else []
+    output_parts, blockquote_text_parts = [], [f"**{title}**\n"] if title else []
     if not body_node:
         return (
             f'> {"".join(blockquote_text_parts)}\n\n' if blockquote_text_parts else ""
