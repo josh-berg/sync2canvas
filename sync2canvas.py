@@ -2,6 +2,7 @@ import re
 import os
 import json
 import argparse
+import html
 
 try:
     import requests
@@ -134,11 +135,11 @@ def handle_strong(node, processor):
     if not core_text:
         return content  # Return original content if it's all whitespace
     # Use single asterisks for Slack's bold format
-    return f"{leading_whitespace}*{core_text}*{trailing_whitespace}"
+    return f"{leading_whitespace}**{core_text}**{trailing_whitespace}"
 
 
 def handle_a(node, processor):
-    """Handles <a> tags for Slack-style links."""
+    """Handles <a> tags for standard Markdown links."""
     text = handle_children(node, processor).strip()
     href = node.get("href", "")
     # Handle Confluence relative links
@@ -146,6 +147,7 @@ def handle_a(node, processor):
         href = "https://sync.hudlnet.com" + href
     if not text:
         return href
+    # Use standard Markdown link format
     return f"[{text}]({href})" if href else text
 
 
@@ -172,7 +174,7 @@ def handle_info_note_macro(node, processor):
 
     output_parts = []
     # Use single asterisks for Slack bold
-    blockquote_text_parts = [f"*{title}*"] if title else []
+    blockquote_text_parts = [f"**{title}**\n"] if title else []
 
     if not body_node:
         if blockquote_text_parts:
@@ -186,7 +188,9 @@ def handle_info_note_macro(node, processor):
             and child.get("ac:name") == "code"
         )
         if is_code_macro:
+            # print(f"Found a 'code' macro, processing separately... {child}")
             if blockquote_text_parts:
+                print("Closing blockquote before code macro...")
                 full_text = "\n".join(blockquote_text_parts).strip()
                 output_parts.append("> " + full_text.replace("\n", "\n> "))
                 blockquote_text_parts = []
@@ -206,14 +210,21 @@ def handle_info_note_macro(node, processor):
 
 
 def handle_code_macro(node, processor):
+    """Handles Confluence 'code' macros."""
     body_node = node.find("ac:plain-text-body")
     if not body_node:
         return ""
-    code_content = "".join(
-        str(c) for c in body_node.contents if isinstance(c, CData)
-    ).strip()
+
+    # After pre-processing, the text is safe to get directly.
+    # We unescape it to restore original characters like '<', '>', '&'.
+    code_content = html.unescape(body_node.get_text(strip=True))
+
     lang_param = node.find("ac:parameter", {"ac:name": "language"})
     lang = lang_param.get_text(strip=True) if lang_param else ""
+
+    if not code_content:
+        return ""
+
     return f"```{lang}\n{code_content}\n```\n\n"
 
 
@@ -245,8 +256,46 @@ CONFLUENCE_MACRO_MAPPINGS = {
 }
 
 
+def preprocess_code_blocks(html_content):
+    """
+    Finds CDATA in code blocks and HTML-encodes its content to protect it from the parser.
+    """
+
+    def replacer(match):
+        # Extract the content inside the CDATA block
+        cdata_content = match.group(1)
+        # HTML-encode the content
+        encoded_content = html.escape(cdata_content)
+        # Return the plain-text-body tag with the encoded content
+        return f"<ac:plain-text-body>{encoded_content}</ac:plain-text-body>"
+
+    # This regex finds a plain-text-body tag containing a CDATA section and captures the CDATA content.
+    # It handles multiline content with re.DOTALL.
+    pattern = re.compile(
+        r"<ac:plain-text-body>.*?<!\[CDATA\[(.*?)\]\]>.*?</ac:plain-text-body>",
+        re.DOTALL,
+    )
+
+    return pattern.sub(replacer, html_content)
+
+
 def convert_confluence_html_to_markdown(html_content):
-    soup = BeautifulSoup(html_content, "lxml")
+    """
+    Main function to convert a Confluence HTML string to Slack Markdown.
+
+    Args:
+        html_content (str): The raw HTML from Confluence.
+
+    Returns:
+        str: The converted Markdown string.
+    """
+    # Pre-process the HTML to handle CDATA blocks safely.
+    safe_html = preprocess_code_blocks(html_content)
+
+    # Use 'lxml' parser on the now-safe HTML.
+    soup = BeautifulSoup(safe_html, "lxml")
+
+    # Process the entire body of the parsed document, or the soup itself if no body tag.
     markdown_output = process_node(soup.body or soup)
     return re.sub(r"\n{3,}", "\n\n", markdown_output).strip()
 
