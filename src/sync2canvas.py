@@ -22,7 +22,6 @@ from handlers import (
     handle_children,
     handle_confluence_macro,
     handle_em,
-    handle_u,
     handle_h,
     handle_image,
     handle_li,
