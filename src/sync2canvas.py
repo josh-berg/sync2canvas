@@ -162,27 +162,23 @@ def main():
     parser.add_argument(
         "-c", "--channel-id", required=True, help="The Slack channel ID for the canvas."
     )
-    parser.add_argument(
-        "-t",
-        "--slack-bot-token",
-        required=True,
-        help="The Slack bot token for authentication.",
-    )
     args = parser.parse_args()
 
-    # Save the page id and slack bot token globally
+    # Save the page id globally
     globals.PAGE_ID = args.page_id
-    globals.SLACK_BOT_TOKEN = args.slack_bot_token
 
     # Check for environment variables
     aws_cookie = os.getenv("AWSELB_COOKIE")
     seraph_cookie = os.getenv("SERAPH_COOKIE")
-    if not all([aws_cookie, seraph_cookie]):
+    slack_bot_token = os.getenv("SLACK_BOT_TOKEN")
+    if not all([aws_cookie, seraph_cookie, slack_bot_token]):
         print("❌ Error: Missing required environment variables.")
         print(
-            "Please set AWSELB_COOKIE and SERAPH_COOKIE with your Confluence authentication cookie values."
+            "Please set AWSELB_COOKIE, SERAPH_COOKIE, and SLACK_BOT_TOKEN with your Confluence authentication and Slack bot token values."
         )
         return
+
+    globals.SLACK_BOT_TOKEN = slack_bot_token
 
     cookies = {
         "AWSELBAuthSessionCookie-0": aws_cookie,
