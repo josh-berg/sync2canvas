@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup, NavigableString, CData
 
 from handlers import (
     handle_a,
+    handle_ac_link,
     handle_br,
     handle_children,
     handle_confluence_macro,
@@ -20,7 +21,11 @@ from handlers import (
     handle_image,
     handle_li,
     handle_p,
+    handle_ri_user,
     handle_strong,
+    handle_table,
+    handle_task,
+    handle_time,
 )
 
 TAG_MAPPINGS = {
@@ -41,7 +46,12 @@ TAG_MAPPINGS = {
     "strong": handle_strong,
     "b": handle_strong,
     "ac:image": handle_image,
+    "table": handle_table,
     "ac:structured-macro": handle_confluence_macro,
+    "ac:link": handle_ac_link,
+    "ri:user": handle_ri_user,
+    "time": handle_time,
+    "ac:task": handle_task,
 }
 
 
@@ -176,11 +186,11 @@ def main():
         f.write(markdown_for_file)
     print(f"✔️ Markdown file saved to: '{md_output_path}'")
 
-    create_slack_canvas(
-        channel_id=args.channel_id,
-        title=title,
-        markdown_content=markdown_for_payload,
-    )
+    # create_slack_canvas(
+    #     channel_id=args.channel_id,
+    #     title=title,
+    #     markdown_content=markdown_for_payload,
+    # )
 
 
 if __name__ == "__main__":

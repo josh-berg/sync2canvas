@@ -169,6 +169,90 @@ def handle_info_note_macro(node, processor):
     return "\n".join(output_parts) + "\n\n"
 
 
+def handle_table(node, processor):
+    all_rows = []
+    th_first_col_every_row = True
+
+    # Find all rows (including those inside <tbody>)
+    for tbody in node.find_all("tbody"):
+        for tr in tbody.find_all("tr", recursive=False):
+            cells = []
+            cell_tags = []
+            for cell in tr.find_all(["th", "td"], recursive=False):
+                cell_content = handle_children(cell, processor).strip()
+                cell_content = cell_content.replace("\n", " ").strip()
+                colspan = int(cell.get("colspan", 1))
+                cells.append(cell_content)
+                cell_tags.append(cell.name)
+                for _ in range(colspan - 1):
+                    cells.append("")
+                    cell_tags.append(cell.name)
+            all_rows.append((cells, cell_tags))
+
+    if not all_rows:
+        return ""
+
+    # Check if every row's first cell is a th
+    for _, tags in all_rows:
+        if not tags or tags[0] != "th":
+            th_first_col_every_row = False
+            break
+
+    # Always use the first row as header row
+    header_cells, header_tags = all_rows[0]
+    output = []
+    # Bold the first column in the header row if needed
+    if th_first_col_every_row:
+        header_cells_fmt = [f"**{header_cells[0]}**"] + header_cells[1:]
+    else:
+        header_cells_fmt = header_cells
+    output.append("| " + " | ".join(header_cells_fmt) + " |")
+    output.append("|" + "|".join([" --- " for _ in header_cells_fmt]) + "|")
+
+    # Render the rest of the rows
+    for cells, tags in all_rows[1:]:
+        # Pad row if short
+        cells = cells + ["" for _ in range(len(header_cells_fmt) - len(cells))]
+        if th_first_col_every_row:
+            row_fmt = [f"**{cells[0]}**"] + cells[1:]
+        else:
+            row_fmt = cells
+        output.append("| " + " | ".join(row_fmt) + " |")
+    return "\n".join(output) + "\n\n"
+
+
+def handle_ac_link(node, processor):
+    # If this is a user link, show a placeholder or userkey
+    user_node = node.find("ri:user")
+    if user_node:
+        return handle_ri_user(node, processor)
+    # Otherwise, process as normal
+    return handle_children(node, processor)
+
+
+def handle_ri_user(node, processor):
+    user_node = node.find("ri:user")
+    userkey = user_node.get("ri:userkey") if user_node else None
+    # TODO: Handle userkey lookup or mapping if needed
+    return f"@{userkey}" if userkey else "@unknown_user"
+
+
+def handle_time(node, processor):
+    datetime_value = node.get("datetime")
+    return datetime_value if datetime_value else ""
+
+
+def handle_task(node, processor):
+    status_node = node.find("ac:task-status")
+    body_node = node.find("ac:task-body")
+
+    status = status_node.get_text(strip=True) if status_node else ""
+    body = body_node.get_text(strip=True) if body_node else ""
+
+    checkbox = "x" if status == "complete" else " "
+    return f"- [{checkbox}] {body}\n"
+
+
 CONFLUENCE_MACRO_MAPPINGS = {
     "info": handle_info_note_macro,
     "note": handle_info_note_macro,
