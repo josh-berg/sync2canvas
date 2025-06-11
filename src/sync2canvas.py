@@ -4,6 +4,7 @@ import json
 import argparse
 import html
 import globals
+import mdformat
 
 from fileUtils import sanitize_filename
 from networkUtils import (
@@ -21,6 +22,7 @@ from handlers import (
     handle_children,
     handle_confluence_macro,
     handle_em,
+    handle_u,
     handle_h,
     handle_image,
     handle_li,
@@ -47,6 +49,7 @@ TAG_MAPPINGS = {
     "a": handle_a,
     "em": handle_em,
     "i": handle_em,
+    "u": handle_strong,
     "strong": handle_strong,
     "b": handle_strong,
     "ac:image": handle_image,
@@ -72,8 +75,32 @@ def process_node(node):
     if node.name in TAG_MAPPINGS:
         result = TAG_MAPPINGS[node.name](node, process_node)
         return result
-    result = "".join(process_node(child) for child in node.children)
-    return result
+    # Block-level tags that should be separated by blank lines
+    block_tags = {
+        "p",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "ul",
+        "ol",
+        "table",
+        "div",
+        "section",
+        "header",
+        "footer",
+        "blockquote",
+    }
+    if hasattr(node, "children"):
+        children = list(node.children)
+        # If any child is block-level, join with two newlines
+        if any(getattr(child, "name", None) in block_tags for child in children):
+            return "\n\n".join(process_node(child) for child in children)
+        else:
+            return "".join(process_node(child) for child in children)
+    return ""
 
 
 callout_counter = 0
@@ -180,7 +207,9 @@ def main():
     markdown_for_payload = (
         f"_Original Author: ![](@{user_slack_id})_\n\n{body_markdown}"
     )
-    markdown_for_file = f"# {title}\n\n{markdown_for_payload}"
+
+    formatted_markdown_for_payload = mdformat.text(markdown_for_payload)
+    markdown_for_file = f"# {title}\n\n{formatted_markdown_for_payload}"
 
     # Create Output Directory and Filenames
     output_dir = "output"
@@ -188,7 +217,21 @@ def main():
 
     base_filename = sanitize_filename(title)
     md_output_path = os.path.join(output_dir, f"{base_filename}.md")
-    # json_output_path = os.path.join(output_dir, f"{base_filename}_payload.json")
+    json_output_path = os.path.join(output_dir, f"{base_filename}_payload.json")
+
+    # Write the JSON payload to a separate file
+    with open(json_output_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "title": title,
+                "markdown": formatted_markdown_for_payload,
+                "author_slack_id": user_slack_id,
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+    print(f"✔️ JSON payload saved to: '{json_output_path}'")
 
     # Write the Markdown File (with the title)
     with open(md_output_path, "w", encoding="utf-8") as f:
@@ -198,7 +241,7 @@ def main():
     create_slack_canvas(
         channel_id=args.channel_id,
         title=title,
-        markdown_content=markdown_for_payload,
+        markdown_content=formatted_markdown_for_payload,
     )
 
 
