@@ -1,5 +1,10 @@
 import html
-from networkUtils import download_attachment, upload_to_slack
+from networkUtils import (
+    download_attachment,
+    fetch_slack_user_by_email,
+    fetch_user_username,
+    upload_to_slack,
+)
 import globals
 
 from fileUtils import delete_file
@@ -170,6 +175,8 @@ def handle_info_note_macro(node, processor):
 
 
 def handle_table(node, processor):
+    return "⚠️ Tables are not supported yet. Manually copy the table from your sync doc. ⚠️\n\n"
+    # Tables are currently not supported by the Slack canvas API, once they are, this method should handle them.
     all_rows = []
     th_first_col_every_row = True
 
@@ -233,8 +240,10 @@ def handle_ac_link(node, processor):
 def handle_ri_user(node, processor):
     user_node = node.find("ri:user")
     userkey = user_node.get("ri:userkey") if user_node else None
-    # TODO: Handle userkey lookup or mapping if needed
-    return f"@{userkey}" if userkey else "@unknown_user"
+    username = fetch_user_username(userkey)
+    email = f"{username}@hudl.com"
+    user_slack_id = fetch_slack_user_by_email(email)
+    return f"![](@{user_slack_id})" if user_slack_id else username
 
 
 def handle_time(node, processor):
@@ -253,10 +262,17 @@ def handle_task(node, processor):
     return f"- [{checkbox}] {body}\n"
 
 
+def handle_status_macro(node, processor):
+    title_node = node.find("ac:parameter", {"ac:name": "title"})
+    title = title_node.get_text(strip=True) if title_node else ""
+    return f"**`{title}`**" if title else ""
+
+
 CONFLUENCE_MACRO_MAPPINGS = {
     "info": handle_info_note_macro,
     "note": handle_info_note_macro,
     "code": handle_code_macro,
     "multimedia": handle_multimedia_macro,
     "jira": handle_jira_macro,
+    "status": handle_status_macro,
 }

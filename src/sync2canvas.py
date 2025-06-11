@@ -6,7 +6,11 @@ import html
 import globals
 
 from fileUtils import sanitize_filename
-from networkUtils import create_slack_canvas, fetch_confluence_data
+from networkUtils import (
+    create_slack_canvas,
+    fetch_confluence_data,
+    fetch_slack_user_by_email,
+)
 
 from bs4 import BeautifulSoup, NavigableString, CData
 
@@ -169,8 +173,13 @@ def main():
     body_markdown = convert_confluence_html_to_markdown(html_content)
     print("✅ Conversion complete.")
 
+    # Get author data
+    user_slack_id = fetch_slack_user_by_email(f"{username}@hudl.com")
+
     # Create two versions of the markdown content
-    markdown_for_payload = f"_Original Author: {username}_\n\n{body_markdown}"
+    markdown_for_payload = (
+        f"_Original Author: ![](@{user_slack_id})_\n\n{body_markdown}"
+    )
     markdown_for_file = f"# {title}\n\n{markdown_for_payload}"
 
     # Create Output Directory and Filenames
@@ -186,11 +195,11 @@ def main():
         f.write(markdown_for_file)
     print(f"✔️ Markdown file saved to: '{md_output_path}'")
 
-    # create_slack_canvas(
-    #     channel_id=args.channel_id,
-    #     title=title,
-    #     markdown_content=markdown_for_payload,
-    # )
+    create_slack_canvas(
+        channel_id=args.channel_id,
+        title=title,
+        markdown_content=markdown_for_payload,
+    )
 
 
 if __name__ == "__main__":

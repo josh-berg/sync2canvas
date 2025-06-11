@@ -7,6 +7,7 @@ from pathUtils import (
     get_sync_attachment_url,
     get_sync_content_api_url,
     get_sync_page_storage_url,
+    get_sync_user_api_url,
 )
 
 
@@ -125,4 +126,41 @@ def create_slack_canvas(channel_id, title, markdown_content):
         )
     except Exception as e:
         print(f"❌ Failed to create Slack canvas: {e}")
+        return None
+
+
+def fetch_user_username(userkey):
+    user_api_url = get_sync_user_api_url(userkey)
+    aws_cookie = os.getenv("AWSELB_COOKIE")
+    seraph_cookie = os.getenv("SERAPH_COOKIE")
+    if not all([aws_cookie, seraph_cookie]):
+        print("❌ Error: Missing required environment variables for user fetch.")
+        return None
+
+    cookies = {
+        "AWSELBAuthSessionCookie-0": aws_cookie,
+        "seraph.confluence": seraph_cookie,
+    }
+
+    try:
+        response = requests.get(user_api_url, cookies=cookies)
+        response.raise_for_status()
+        user_data = response.json()
+        return user_data.get("username", "Unknown User")
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Failed to fetch user data: {e}")
+        return None
+
+
+def fetch_slack_user_by_email(email):
+    client = WebClient(token=globals.SLACK_BOT_TOKEN)
+    try:
+        response = client.users_lookupByEmail(email=email)
+        if response["ok"]:
+            print(f"🔍 Slack user found for {email} ({response['user']['id']})")
+            return response["user"]["id"]
+        else:
+            print(f"🤷 Slack user not found for {email}.")
+            return None
+    except Exception as e:
         return None
