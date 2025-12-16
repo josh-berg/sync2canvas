@@ -1,0 +1,5 @@
+beautifulsoup4
+mdformat
+requests
+slack_sdk
+lxml

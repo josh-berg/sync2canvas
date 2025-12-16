@@ -169,12 +169,12 @@ def main():
 
     # Check for environment variables
     aws_cookie = os.getenv("AWSELB_COOKIE")
-    seraph_cookie = os.getenv("SERAPH_COOKIE")
+    jsessionid = os.getenv("JSESSIONID")
     slack_bot_token = os.getenv("SLACK_BOT_TOKEN")
-    if not all([aws_cookie, seraph_cookie, slack_bot_token]):
+    if not all([aws_cookie, jsessionid, slack_bot_token]):
         print("❌ Error: Missing required environment variables.")
         print(
-            "Please set AWSELB_COOKIE, SERAPH_COOKIE, and SLACK_BOT_TOKEN with your Confluence authentication and Slack bot token values."
+            "Please set AWSELB_COOKIE, JSESSIONID, and SLACK_BOT_TOKEN with your Confluence authentication and Slack bot token values."
         )
         return
 
@@ -182,7 +182,7 @@ def main():
 
     cookies = {
         "AWSELBAuthSessionCookie-0": aws_cookie,
-        "seraph.confluence": seraph_cookie,
+        "JSESSIONID": jsessionid,
     }
 
     # Fetch data from Confluence

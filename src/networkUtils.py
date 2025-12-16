@@ -62,14 +62,14 @@ def download_attachment(filename):
     local_path = os.path.join(dest_folder, filename)
 
     aws_cookie = os.getenv("AWSELB_COOKIE")
-    seraph_cookie = os.getenv("SERAPH_COOKIE")
-    if not all([aws_cookie, seraph_cookie]):
+    jsessionid = os.getenv("JSESSIONID")
+    if not all([aws_cookie, jsessionid]):
         print("❌ Error: Missing required environment variables for download.")
         return None
 
     cookies = {
         "AWSELBAuthSessionCookie-0": aws_cookie,
-        "seraph.confluence": seraph_cookie,
+        "seraph.confluence": jsessionid,
     }
 
     try:
@@ -132,14 +132,14 @@ def create_slack_canvas(channel_id, title, markdown_content):
 def fetch_user_username(userkey):
     user_api_url = get_sync_user_api_url(userkey)
     aws_cookie = os.getenv("AWSELB_COOKIE")
-    seraph_cookie = os.getenv("SERAPH_COOKIE")
-    if not all([aws_cookie, seraph_cookie]):
+    jsessionid = os.getenv("JSESSIONID")
+    if not all([aws_cookie, jsessionid]):
         print("❌ Error: Missing required environment variables for user fetch.")
         return None
 
     cookies = {
         "AWSELBAuthSessionCookie-0": aws_cookie,
-        "seraph.confluence": seraph_cookie,
+        "seraph.confluence": jsessionid,
     }
 
     try:
