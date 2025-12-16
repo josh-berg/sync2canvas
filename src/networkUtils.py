@@ -12,8 +12,8 @@ from pathUtils import (
 
 
 def fetch_confluence_data(cookies):
-    storage_url = get_sync_page_storage_url(globals.PAGE_ID)
-    api_url = get_sync_content_api_url(globals.PAGE_ID)
+    storage_url = get_sync_page_storage_url(globals.BASE_CONFLUENCE_URL, globals.PAGE_ID)
+    api_url = get_sync_content_api_url(globals.BASE_CONFLUENCE_URL, globals.PAGE_ID)
 
     try:
         print(f"🌐 Fetching page content for page ID: {globals.PAGE_ID}...")
@@ -56,7 +56,7 @@ def fetch_confluence_data(cookies):
 
 
 def download_attachment(filename):
-    url = get_sync_attachment_url(globals.PAGE_ID, filename)
+    url = get_sync_attachment_url(globals.BASE_CONFLUENCE_URL, globals.PAGE_ID, filename)
     dest_folder = "tmp"
     os.makedirs(dest_folder, exist_ok=True)
     local_path = os.path.join(dest_folder, filename)
@@ -69,7 +69,7 @@ def download_attachment(filename):
 
     cookies = {
         "AWSELBAuthSessionCookie-0": aws_cookie,
-        "seraph.confluence": jsessionid,
+        "JSESSIONID": jsessionid,
     }
 
     try:
@@ -130,7 +130,7 @@ def create_slack_canvas(channel_id, title, markdown_content):
 
 
 def fetch_user_username(userkey):
-    user_api_url = get_sync_user_api_url(userkey)
+    user_api_url = get_sync_user_api_url(globals.BASE_CONFLUENCE_URL, userkey)
     aws_cookie = os.getenv("AWSELB_COOKIE")
     jsessionid = os.getenv("JSESSIONID")
     if not all([aws_cookie, jsessionid]):
@@ -139,7 +139,7 @@ def fetch_user_username(userkey):
 
     cookies = {
         "AWSELBAuthSessionCookie-0": aws_cookie,
-        "seraph.confluence": jsessionid,
+        "JSESSIONID": jsessionid,
     }
 
     try:

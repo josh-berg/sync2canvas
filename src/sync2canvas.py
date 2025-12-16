@@ -162,10 +162,16 @@ def main():
     parser.add_argument(
         "-c", "--channel-id", required=True, help="The Slack channel ID for the canvas."
     )
+    parser.add_argument(
+        "-u", "--base-confluence-url",
+        default="https://sync.hudlnet.com",
+        help="The base URL for the Confluence instance (default: https://sync.hudlnet.com)."
+    )
     args = parser.parse_args()
 
-    # Save the page id globally
+    # Save the page id and base URL globally
     globals.PAGE_ID = args.page_id
+    globals.BASE_CONFLUENCE_URL = args.base_confluence_url
 
     # Check for environment variables
     aws_cookie = os.getenv("AWSELB_COOKIE")

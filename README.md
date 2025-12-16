@@ -18,6 +18,7 @@ The following environment variables must be set:
 
 - `-p, --page-id` **(required)** - The ID of the Confluence page to fetch
 - `-c, --channel-id` **(required)** - The Slack channel ID where the canvas will be created
+- `-u, --base-confluence-url` - The base URL for the Confluence instance (default: `https://sync.hudlnet.com`)
 
 ## Usage Examples
 
@@ -31,6 +32,12 @@ Using long-form arguments:
 
 ```bash
 python src/sync2canvas.py --page-id 123456789 --channel-id C01234ABCDE
+```
+
+With a custom Confluence URL:
+
+```bash
+python src/sync2canvas.py -p 123456789 -c C01234ABCDE -u https://mycompany.atlassian.net
 ```
 
 With environment variables set inline:
